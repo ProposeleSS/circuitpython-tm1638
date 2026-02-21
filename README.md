@@ -1,6 +1,6 @@
-# MicroPython TM1638 LED Driver
+# CircuitPython TM1638 LED Driver
 
-A MicroPython library for LED&KEY modules with 8x 7-segment decimal LED modules, 8x individual LEDs and 8x switches using the TM1738 LED driver.
+A CircuitPython library for LED&KEY modules with 8x 7-segment decimal LED modules, 8x individual LEDs and 8x switches using the TM1738 LED driver.
 
 ![demo](docs/demo.jpg)
 
