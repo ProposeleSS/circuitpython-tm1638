@@ -34,8 +34,9 @@ SOFTWARE.
 # 16x push buttons
 
 from micropython import const
-from machine import Pin
-from time import sleep_us, sleep_ms
+import board
+import digitalio
+from time import sleep
 
 TM1638_CMD1 = const(64)  # 0x40 data command
 TM1638_CMD2 = const(192) # 0xC0 address command
@@ -50,9 +51,9 @@ _SEGMENTS = bytearray(b'\x3F\x06\x5B\x4F\x66\x6D\x7D\x07\x7F\x6F\x77\x7C\x39\x5E
 class TM1638(object):
     """Library for the TM1638 LED display driver."""
     def __init__(self, stb, clk, dio, brightness=7):
-        self.stb = stb
-        self.clk = clk
-        self.dio = dio
+        self.stb = digitalio.DigitalInOut(stb)
+        self.clk = digitalio.DigitalInOut(clk)
+        self.dio = digitalio.DigitalInOut(dio)
 
         if not 0 <= brightness <= 7:
             raise ValueError("Brightness out of range")
@@ -60,9 +61,13 @@ class TM1638(object):
 
         self._on = TM1638_DSP_ON
 
-        self.clk.init(Pin.OUT, value=1)
-        self.dio.init(Pin.OUT, value=0)
-        self.stb.init(Pin.OUT, value=1)
+        self.clk.switch_to_output()
+        self.dio.switch_to_output()
+        self.stb.switch_to_output()
+        
+        self.clk.value = 1
+        self.dio.value = 0
+        self.stb.value = 1
 
         self.clear()
         self._write_dsp_ctrl()
@@ -80,26 +85,26 @@ class TM1638(object):
         self._command(TM1638_CMD3 | self._on | self._brightness)
 
     def _command(self, cmd):
-        self.stb(0)
+        self.stb.value = 0
         self._byte(cmd)
-        self.stb(1)
+        self.stb.value = 1
 
     def _byte(self, b):
         for i in range(8):
-            self.clk(0)
-            self.dio((b >> i) & 1)
-            self.clk(1)
+            self.clk.value = 0
+            self.dio.value = (b >> i) & 1
+            self.clk.value = 1
 
     def _scan_keys(self):
         """Reads one of the four bytes representing which keys are pressed."""
         pressed = 0
-        self.dio.init(Pin.IN, Pin.PULL_UP)
+        self.dio.switch_to_input(pull=digitalio.Pull.UP)
         for i in range(8):
-            self.clk(0)
-            if self.dio.value():
+            self.clk.value = 0
+            if self.dio.value:
                 pressed |= 1 << i
-            self.clk(1)
-        self.dio.init(Pin.OUT)
+            self.clk.value = 1
+        self.dio.switch_to_output()
         return pressed
 
     def power(self, val=None):
@@ -123,11 +128,11 @@ class TM1638(object):
     def clear(self):
         """Write zeros to each address"""
         self._write_data_cmd()
-        self.stb(0)
+        self.stb.value = 0
         self._set_address(0)
         for i in range(16):
             self._byte(0x00)
-        self.stb(1)
+        self.stb.value = 1
 
     def write(self, data, pos=0):
         """Write to all 16 addresses from a given position.
@@ -135,11 +140,11 @@ class TM1638(object):
         if not 0 <= pos <= 15:
             raise ValueError("Position out of range")
         self._write_data_cmd()
-        self.stb(0)
+        self.stb.value = 0
         self._set_address(pos)
         for b in data:
             self._byte(b)
-        self.stb(1)
+        self.stb.value = 1
 
     def led(self, pos, val):
         """Set the value of a single LED"""
@@ -151,11 +156,11 @@ class TM1638(object):
         self._write_data_cmd()
         pos = 1
         for i in range(8):
-            self.stb(0)
+            self.stb.value = 0
             self._set_address(pos)
             self._byte((val >> i) & 1)
             pos += 2
-            self.stb(1)
+            self.stb.value = 1
 
     def segments(self, segments, pos=0):
         """Set one or more segments at a relative position.
@@ -164,26 +169,26 @@ class TM1638(object):
             raise ValueError("Position out of range")
         self._write_data_cmd()
         for seg in segments:
-            self.stb(0)
+            self.stb.value = 0
             self._set_address(pos << 1)
             self._byte(seg)
             pos += 1
-            self.stb(1)
+            self.stb.value = 1
 
     def keys(self):
         """Return a byte representing which keys are pressed. LSB is SW1"""
         keys = 0
-        self.stb(0)
+        self.stb.value = 0
         self._byte(TM1638_CMD1 | TM1638_READ)
         for i in range(4):
             keys |= self._scan_keys() << i
-        self.stb(1)
+        self.stb.value = 1
         return keys
 
     def qyf_keys(self):
         """Return a 16-bit value representing which keys are pressed. LSB is SW1"""
         keys = 0
-        self.stb(0)
+        self.stb.value = 0
         self._byte(TM1638_CMD1 | TM1638_READ)
         for i in range(4):
             i_keys = self._scan_keys()
@@ -192,7 +197,7 @@ class TM1638(object):
                     x = (0x04 >> k) << j*4
                     if i_keys & x == x:
                         keys |= (1 << (j + k*8 + 2*i))
-        self.stb(1)
+        self.stb.value = 1
         return keys
 
     def encode_digit(self, digit):
@@ -274,7 +279,7 @@ class TM1638(object):
         segments = self.encode_string(string)
         self.segments(segments[:8], pos)
 
-    def scroll(self, string, delay=250):
+    def scroll(self, string, delay=0.25):
         """Display a string, scrolling from the right to left, speed adjustable.
         String starts off-screen right and scrolls until off-screen left."""
         segments = string if isinstance(string, list) else self.encode_string(string)
@@ -282,4 +287,4 @@ class TM1638(object):
         data[8:0] = list(segments)
         for i in range(len(segments) + 9):
             self.segments(data[0+i:8+i])
-            sleep_ms(delay)
+            sleep(delay)
